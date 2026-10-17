@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="今日事今日毕">
+  <!-- 绿底 + 白色日历页 + 一个大勾。与四线生活系统的图标故意不同形。 -->
+  <rect width="512" height="512" rx="116" fill="#2f8066"/>
+  <rect x="190" y="118" width="28" height="62" rx="14" fill="#f5f6f2"/>
+  <rect x="294" y="118" width="28" height="62" rx="14" fill="#f5f6f2"/>
+  <rect x="128" y="150" width="256" height="244" rx="30" fill="#f5f6f2"/>
+  <path d="M186 282 L240 336 L330 222"
+        fill="none" stroke="#2f8066" stroke-width="42"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

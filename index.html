@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eef0ea">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="今日毕">
+<link rel="manifest" href="./app.webmanifest">
+<!-- iOS 主屏图标只认 PNG；SVG 会被忽略、退化成网页截图。 -->
+<link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png">
+<link rel="icon" type="image/svg+xml" href="./icon.svg">
+<title>今日事今日毕</title>
+<!--
+  设计定稿（2026-10-17，四条已拍板的规则，改之前先想清楚）：
+   1. 不做社交 —— 纯本地、无账号、无分享图、无同步。
+   2. 结转全自动 —— 换日时未完成项自己滚过来，不要手动认领。
+   3. 结转超过 STALE_DAYS 天就劝删 —— 「删掉它 / 再留一天」，留一天只压一天。
+   4. 独立 app —— 不并进四线生活系统，自己的图标、自己的 localStorage。
+  另外三条：结转按真实流逝天数累加（隔 3 天没开就 +3）；删掉的事不进回顾；凌晨 4 点才算换日。
+-->
+<style>
+  :root{
+    --ink:#24332b; --muted:#6b7a71; --page:#eef0ea; --card:#fff; --line:#dde4dd;
+    --done:#2f8066; --done-soft:#e3f0ea; --late:#b2493f; --late-soft:#f8e6e3;
+    --shadow:0 8px 22px rgba(31,52,42,.10);
+    --kb:0px;
+    font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;color:var(--ink);background:var(--page);line-height:1.45;
+    -webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;overscroll-behavior-y:none;
+  }
+  button,input,textarea{font:inherit;color:inherit}
+  button{cursor:pointer;-webkit-user-select:none;user-select:none}
+  button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid rgba(47,128,102,.28);outline-offset:2px}
+
+  .app{width:min(100%,520px);height:100dvh;margin:0 auto;display:flex;flex-direction:column}
+  .content{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:calc(10px + env(safe-area-inset-top)) 16px 10px}
+  .page{display:none}
+  .page.on{display:block}
+
+  /* ---------- 头部 ---------- */
+  .apphead{padding:6px 4px 14px}
+  .eyebrow{font-size:11px;font-weight:750;letter-spacing:.12em;color:var(--done);text-transform:uppercase;margin-bottom:3px}
+  .date{font-size:27px;font-weight:700;letter-spacing:-.03em;margin:0}
+  .date small{font-size:14px;font-weight:600;color:var(--muted);margin-left:8px;letter-spacing:0}
+  .ring{display:flex;align-items:center;gap:10px;margin-top:13px}
+  .bar{flex:1;height:8px;border-radius:999px;background:rgba(47,128,102,.16);overflow:hidden}
+  .bar span{display:block;height:100%;width:0;background:var(--done);border-radius:999px;transition:width .3s}
+  .count{font-size:13px;font-weight:700;color:var(--done);white-space:nowrap;font-variant-numeric:tabular-nums}
+
+  /* ---------- 今天 ---------- */
+  .item{background:var(--card);border-radius:16px;margin-bottom:9px;box-shadow:var(--shadow)}
+  .itemmain{display:flex;align-items:flex-start;gap:11px;padding:13px 11px 13px 12px}
+  .item.is-done{background:var(--done-soft);box-shadow:none}
+  .item.is-stale{border:1px solid rgba(178,73,63,.3);box-shadow:0 8px 22px rgba(178,73,63,.14)}
+  .tick{flex:0 0 26px;height:26px;margin-top:1px;padding:0;border-radius:50%;border:2px solid var(--line);background:#fff;display:grid;place-items:center;font-size:14px;color:transparent}
+  .item.is-done .tick{border-color:var(--done);background:var(--done);color:#fff}
+  .txt{flex:1;min-width:0;font-size:15.5px;word-break:break-word}
+  .item.is-done .txt{color:#5d7a6c;text-decoration:line-through;text-decoration-color:rgba(47,128,102,.5)}
+  .idx{color:var(--muted);font-weight:600;margin-right:5px}
+  .tag{display:inline-block;margin-top:5px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--late-soft);color:var(--late)}
+  .tag.fresh{background:#eceff0;color:var(--muted)}
+  .del{flex:0 0 30px;height:30px;margin-top:-2px;padding:0;border:0;background:transparent;color:#c0c9c2;font-size:19px;line-height:1}
+  .nudge{border-top:1px dashed rgba(178,73,63,.35);background:var(--late-soft);border-radius:0 0 15px 15px;padding:11px 13px}
+  .nudge p{margin:0 0 9px;font-size:12.5px;color:#8c3b33;line-height:1.45}
+  .nudge .row{display:flex;gap:7px}
+  .nudge button{border:0;border-radius:10px;padding:8px 13px;font-size:12.5px;font-weight:700}
+  .nudge .drop{background:var(--late);color:#fff}
+  .nudge .keep{background:#fff;color:#8c3b33;border:1px solid rgba(178,73,63,.35)}
+  .empty{text-align:center;color:var(--muted);font-size:14px;padding:44px 20px}
+  .empty b{display:block;font-size:17px;color:var(--done);margin-bottom:6px}
+
+  /* ---------- 回顾（只按日期分组记已完成的事） ---------- */
+  .logday{display:flex;justify-content:space-between;align-items:baseline;margin:17px 3px 8px;font-size:12px;font-weight:750;color:var(--muted);letter-spacing:.02em}
+  .logday:first-child{margin-top:2px}
+  .logday span{font-weight:650;color:#9aa8a0}
+  .logrow{display:flex;align-items:flex-start;gap:11px;background:var(--card);border-radius:14px;padding:11px 13px;margin-bottom:7px;box-shadow:var(--shadow)}
+  .logdot{flex:0 0 18px;height:18px;margin-top:2px;border-radius:50%;background:var(--done-soft);color:var(--done);font-size:11px;font-weight:800;display:grid;place-items:center}
+  .logtxt{flex:1;min-width:0;font-size:14.5px;word-break:break-word}
+
+  /* ---------- 底座：输入 + 导航 ---------- */
+  .dock{flex:0 0 auto;transform:translateY(calc(-1 * var(--kb)));transition:transform .18s}
+  .composer{display:flex;gap:8px;padding:10px 16px;background:rgba(238,240,234,.96);border-top:1px solid var(--line)}
+  .composer.hide{display:none}
+  /* 16px 是 iOS 的底线：再小一点聚焦时整页会被放大。 */
+  .composer input{flex:1;min-width:0;border:1px solid var(--line);border-radius:13px;padding:11px 13px;font-size:16px;background:#fff}
+  .composer button{flex:0 0 auto;border:0;border-radius:13px;background:var(--done);color:#fff;font-weight:700;padding:0 18px;font-size:18px}
+  .tabs{display:flex;border-top:1px solid var(--line);background:#fff;padding:8px 0 calc(8px + env(safe-area-inset-bottom))}
+  .tabs button{flex:1;border:0;background:transparent;color:var(--muted);font-size:11px;font-weight:650;display:grid;gap:3px;justify-items:center;padding:4px 0}
+  .tabs button em{font-style:normal;font-size:20px;line-height:1}
+  .tabs button.on{color:var(--done)}
+
+  .toast{position:fixed;left:50%;bottom:calc(104px + env(safe-area-inset-bottom));transform:translate(-50%,14px);display:flex;align-items:center;gap:12px;background:#24332b;color:#fff;font-size:13px;padding:10px 14px;border-radius:13px;opacity:0;pointer-events:none;transition:.24s;max-width:min(88%,460px);z-index:9}
+  .toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+  .toast button{border:0;background:rgba(255,255,255,.17);color:#fff;border-radius:9px;padding:5px 10px;font-size:12.5px;font-weight:700;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="content">
+
+    <!-- ===== 今天 ===== -->
+    <section class="page on" id="pageToday">
+      <div class="apphead">
+        <div class="eyebrow">今日事今日毕</div>
+        <p class="date" id="dateText">—<small id="weekText"></small></p>
+        <div class="ring">
+          <div class="bar"><span id="barFill"></span></div>
+          <div class="count" id="countText">0 / 0</div>
+        </div>
+      </div>
+      <div id="list"></div>
+    </section>
+
+    <!-- ===== 回顾 ===== -->
+    <section class="page" id="pageReview">
+      <div class="apphead">
+        <div class="eyebrow">回顾</div>
+        <p class="date">已完成<small id="logTotal"></small></p>
+      </div>
+      <div id="logBody"></div>
+    </section>
+
+  </div>
+
+  <div class="dock">
+    <div class="composer" id="composer">
+      <input id="newText" placeholder="加一件今天要毕的事…" autocomplete="off" enterkeyhint="done">
+      <button id="addBtn" aria-label="添加">＋</button>
+    </div>
+    <nav class="tabs">
+      <button class="on" data-tab="today"><em>☑</em>今天</button>
+      <button data-tab="review"><em>◔</em>回顾</button>
+    </nav>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span id="toastText"></span><button id="toastAct" hidden></button></div>
+
+<script>
+/* ==== LOGIC:START —— 这段不碰 DOM，_tools/logic.test.js 会原样抽出来真跑，别往里塞 DOM 代码 ==== */
+/* ===================== 常量 ===================== */
+var KEY = 'jinrishi-jinribi.v1';
+var CUTOFF_HOUR = 4;    // 凌晨 4 点前打勾，仍算前一天
+var STALE_DAYS = 5;     // 结转超过 5 天开始劝删（即第 6 天起）
+var WEEK = ['周日','周一','周二','周三','周四','周五','周六'];
+
+/* ===================== 日期 ===================== */
+function pad(n){ return String(n).padStart(2,'0'); }
+function iso(d){ return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()); }
+function fromISO(s){ var p = String(s).split('-').map(Number); return new Date(p[0], p[1]-1, p[2]); }
+// 参数 now 只为可测；正常调用不传。
+function logicalToday(now){
+  var d = now ? new Date(now) : new Date();
+  if (d.getHours() < CUTOFF_HOUR) d.setDate(d.getDate() - 1);
+  return iso(d);
+}
+function dayGap(a, b){ return Math.round((fromISO(b) - fromISO(a)) / 864e5); }
+function prettyDay(s){ var d = fromISO(s); return d.getFullYear() + '.' + pad(d.getMonth()+1) + '.' + pad(d.getDate()); }
+function dowOf(s){ return WEEK[fromISO(s).getDay()]; }
+
+/* ===================== 状态 ===================== */
+function blank(){ return { v:1, day:logicalToday(), seq:1, items:[], archive:[] }; }
+var state = blank();
+var lastDeleted = null;   // 撤销删除用：{ item, index }
+
+function save(){
+  try { localStorage.setItem(KEY, JSON.stringify(state)); }
+  catch (e) { toast('存不进去——可能是无痕模式，这次改动关掉就没了'); }
+}
+function load(){
+  var raw = null;
+  try { raw = localStorage.getItem(KEY); } catch (e) { return; }
+  if (!raw) return;
+  try {
+    var s = JSON.parse(raw);
+    if (s && Array.isArray(s.items) && Array.isArray(s.archive)) {
+      state = { v:1, day: s.day || logicalToday(), seq: s.seq || 1, items: s.items, archive: s.archive };
+    }
+  } catch (e) { /* 解析失败就按新装处理，不动 state */ }
+}
+
+/* 换日：完成的沉进回顾，未完成的按真实流逝天数累加结转天数。
+   隔 3 天没打开就 +3 —— 只 +1 等于奖励你不打开。 */
+function rollover(cur){
+  cur = cur || logicalToday();     // 参数只为可测
+  if (cur === state.day) return null;
+
+  var gap = dayGap(state.day, cur);
+  if (!(gap > 0)) { state.day = cur; save(); return null; }   // 时钟回拨 / 脏数据，保守处理
+
+  var finished = state.items.filter(function(i){ return i.done; });
+  finished.forEach(function(i){
+    state.archive.push({ day: i.doneDay || state.day, text: i.text, doneAt: i.doneAt || 0 });
+  });
+
+  var left = state.items.filter(function(i){ return !i.done; });
+  left.forEach(function(i){ i.carried = (i.carried || 0) + gap; i.snoozed = false; });
+
+  state.items = left;
+  state.day = cur;
+  save();
+  return { gap: gap, done: finished.length, left: left.length };
+}
+
+function esc(s){ return String(s).replace(/[<>&"]/g, function(c){ return ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'})[c]; }); }
+function isStale(it){ return !it.done && (it.carried || 0) > STALE_DAYS; }
+/* ==== LOGIC:END ==== */
+
+function checkDay(){
+  var r = rollover();
+  if (!r) return;
+  render();
+  var head = r.gap > 1 ? ('隔了 ' + r.gap + ' 天 · ') : '';
+  toast(head + '归档 ' + r.done + ' 件 · 结转 ' + r.left + ' 件');
+}
+
+/* ===================== 渲染 ===================== */
+function render(){
+  document.getElementById('dateText').firstChild.nodeValue = prettyDay(state.day);
+  document.getElementById('weekText').textContent = dowOf(state.day);
+
+  var done = state.items.filter(function(i){ return i.done; }).length;
+  var total = state.items.length;
+  document.getElementById('countText').textContent = done + ' / ' + total;
+  document.getElementById('barFill').style.width = (total ? done / total * 100 : 0) + '%';
+
+  var list = document.getElementById('list');
+  if (!total) {
+    list.innerHTML = '<div class="empty"><b>今天是空的</b>写下第一件事，今天把它毕了。</div>';
+  } else {
+    list.innerHTML = state.items.map(function(it, n){
+      var tag = '';
+      if (!it.done && (it.carried || 0) > 0)   tag = '<span class="tag">结转 ' + it.carried + ' 天</span>';
+      else if (!it.done && it.addedDay === state.day) tag = '<span class="tag fresh">今天新加</span>';
+
+      var nudge = (isStale(it) && !it.snoozed)
+        ? '<div class="nudge">' +
+            '<p>拖了 ' + it.carried + ' 天还没动 —— 大概它没你想的那么重要。</p>' +
+            '<div class="row">' +
+              '<button class="drop" data-act="drop" data-id="' + it.id + '">删掉它</button>' +
+              '<button class="keep" data-act="keep" data-id="' + it.id + '">再留一天</button>' +
+            '</div>' +
+          '</div>'
+        : '';
+
+      return '<div class="item' + (it.done ? ' is-done' : '') + (isStale(it) ? ' is-stale' : '') + '">' +
+        '<div class="itemmain">' +
+          '<button class="tick" data-act="toggle" data-id="' + it.id + '" aria-label="完成">✓</button>' +
+          '<div class="txt"><span class="idx">' + (n+1) + '.</span>' + esc(it.text) + tag + '</div>' +
+          '<button class="del" data-act="del" data-id="' + it.id + '" aria-label="删除">×</button>' +
+        '</div>' + nudge +
+      '</div>';
+    }).join('');
+  }
+  renderLog();
+}
+
+/* 回顾 = 已完成的事，按日期倒序分组；今天刚打勾的也一并算进来。
+   只显示日期，不显示几点（doneAt 仅用于同一天内排序）。 */
+function renderLog(){
+  var live = state.items.filter(function(i){ return i.done; }).map(function(i){
+    return { day: i.doneDay || state.day, text: i.text, doneAt: i.doneAt || 0 };
+  });
+  var all = state.archive.concat(live);
+
+  document.getElementById('logTotal').textContent = all.length ? ('共 ' + all.length + ' 件') : '';
+
+  var body = document.getElementById('logBody');
+  if (!all.length) {
+    body.innerHTML = '<div class="empty"><b>还没有记录</b>打勾一件事，它会留在这里。</div>';
+    return;
+  }
+
+  var days = all.map(function(r){ return r.day; })
+    .filter(function(d, i, a){ return a.indexOf(d) === i; })
+    .sort().reverse();
+
+  body.innerHTML = days.map(function(day){
+    var rows = all.filter(function(r){ return r.day === day; })
+      .sort(function(a, b){ return (b.doneAt || 0) - (a.doneAt || 0); });
+    return '<div class="logday">' + prettyDay(day) + ' ' + dowOf(day) + '<span>' + rows.length + ' 件</span></div>' +
+      rows.map(function(r){
+        return '<div class="logrow"><div class="logdot">✓</div><div class="logtxt">' + esc(r.text) + '</div></div>';
+      }).join('');
+  }).join('');
+}
+
+/* ===================== 提示条 ===================== */
+var toastTimer = null;
+function toast(msg, actionLabel, action){
+  var box = document.getElementById('toast');
+  var btn = document.getElementById('toastAct');
+  document.getElementById('toastText').textContent = msg;
+  if (actionLabel) {
+    btn.hidden = false;
+    btn.textContent = actionLabel;
+    btn.onclick = function(){ box.classList.remove('show'); action(); };
+  } else {
+    btn.hidden = true;
+    btn.onclick = null;
+  }
+  box.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ box.classList.remove('show'); }, actionLabel ? 5200 : 2600);
+}
+
+/* ===================== 操作 ===================== */
+document.getElementById('list').addEventListener('click', function(e){
+  var b = e.target.closest('button[data-act]');
+  if (!b) return;
+  var id = Number(b.getAttribute('data-id'));
+  var act = b.getAttribute('data-act');
+  var idx = state.items.findIndex(function(i){ return i.id === id; });
+  if (idx < 0) return;
+  var it = state.items[idx];
+
+  if (act === 'toggle') {
+    it.done = !it.done;
+    it.doneAt = it.done ? Date.now() : 0;
+    it.doneDay = it.done ? state.day : null;
+    save(); render();
+    if (state.items.length && state.items.every(function(i){ return i.done; })) toast('今天全毕了 ✅');
+    return;
+  }
+
+  if (act === 'keep') {
+    it.snoozed = true;
+    save(); render();
+    toast('那就再留一天，明天还会问');
+    return;
+  }
+
+  // del（手动删）/ drop（劝删里点的删）
+  lastDeleted = { item: it, index: idx };
+  state.items.splice(idx, 1);
+  save(); render();
+  toast(act === 'drop' ? '删了——拖这么久的事，删掉比留着诚实' : '删掉了', '撤销', undoDelete);
+});
+
+function undoDelete(){
+  if (!lastDeleted) return;
+  var at = Math.min(lastDeleted.index, state.items.length);
+  state.items.splice(at, 0, lastDeleted.item);
+  lastDeleted = null;
+  save(); render();
+}
+
+function add(){
+  var el = document.getElementById('newText');
+  var v = el.value.trim();
+  if (!v) return;
+  state.items.push({
+    id: state.seq++, text: v, done: false, doneAt: 0, doneDay: null,
+    carried: 0, snoozed: false, addedDay: state.day
+  });
+  el.value = '';
+  save(); render();
+}
+document.getElementById('addBtn').onclick = add;
+document.getElementById('newText').addEventListener('keydown', function(e){
+  if (e.key === 'Enter') { e.preventDefault(); add(); }
+});
+
+/* ===================== 分页 ===================== */
+document.querySelectorAll('.tabs button').forEach(function(btn){
+  btn.onclick = function(){
+    var isToday = btn.getAttribute('data-tab') === 'today';
+    document.querySelectorAll('.tabs button').forEach(function(b){ b.classList.toggle('on', b === btn); });
+    document.getElementById('pageToday').classList.toggle('on', isToday);
+    document.getElementById('pageReview').classList.toggle('on', !isToday);
+    document.getElementById('composer').classList.toggle('hide', !isToday);
+    document.querySelector('.content').scrollTop = 0;
+  };
+});
+
+/* ===================== iOS 键盘：别遮住输入框 ===================== */
+if (window.visualViewport) {
+  var vv = window.visualViewport;
+  var fitKeyboard = function(){
+    var off = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty('--kb', off + 'px');
+  };
+  vv.addEventListener('resize', fitKeyboard);
+  vv.addEventListener('scroll', fitKeyboard);
+  fitKeyboard();
+}
+
+/* ===================== 启动 ===================== */
+load();
+checkDay();        // 打开即结算昨天
+render();
+
+// 息屏放回来、或开着过了午夜，都要重新结算。
+document.addEventListener('visibilitychange', function(){ if (!document.hidden) checkDay(); });
+setInterval(checkDay, 60000);
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('./sw.js').catch(function(){ /* 离线能力拿不到就算了，不影响用 */ });
+  });
+}
+</script>
+</body>
+</html>
