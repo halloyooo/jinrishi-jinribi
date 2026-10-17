@@ -402,6 +402,15 @@ render();
 document.addEventListener('visibilitychange', function(){ if (!document.hidden) checkDay(); });
 setInterval(checkDay, 60000);
 
+/* 申请持久存储。默认是 best-effort 模式，手机存储被挤爆时整个 origin 的数据可能被清掉；
+   进了持久模式就排除在自动清理之外。WebKit 按启发式批准，「是否作为主屏 web app 打开」
+   是其中一个因素（见 webkit.org/blog/14403）。拿不到就算了，不影响任何功能。 */
+if (navigator.storage && navigator.storage.persisted) {
+  navigator.storage.persisted().then(function (already) {
+    if (!already && navigator.storage.persist) return navigator.storage.persist();
+  })['catch'](function () { /* 不支持或被拒，照常用 */ });
+}
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function(){
     navigator.serviceWorker.register('./sw.js').catch(function(){ /* 离线能力拿不到就算了，不影响用 */ });
